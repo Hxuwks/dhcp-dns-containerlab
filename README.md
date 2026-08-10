@@ -9,7 +9,7 @@ A fully functional, multi-segment corporate network lab emulated locally using *
 * **Switching:** Nokia SR Linux (VLAN trunking and bridging)
 * **High Availability:** Keepalived (VRRP protocol for gateway failover)
 * **Services:** `dnsmasq` (DNS resolution and DHCP server)
-* **Security:** Stateful `iptables` firewall implementing strict network segmentation and *Zero Trust* policies.
+* **Security:** Stateful `iptables` firewall implementing strict network segmentation and *Zero Trust* policies and also `Suricata` for network monitoring.
 
 ## Architecture Overview
 
@@ -31,6 +31,7 @@ dhcp-dns-lab/
     │   ├── dnsmasq.conf    # DNS/DHCP configuration (if applicable)
     │   ├── frr.conf        # FRRouting routing daemon configuration
     │   └── keepalived-bk.conf # Keepalived (VRRP) backup configuration
+    ├── srv-mon/            # Configuration files for suricata
     ├── frr-gateway/        # Configuration files for the primary gateway router
     │   ├── dnsmasq.conf    # dnsmasq configuration for DNS resolution and DHCP
     │   ├── frr.conf        # FRRouting routing configuration

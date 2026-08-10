@@ -1,0 +1,2 @@
+# 1. Ловим любой ICMP Echo Request (пинг) в сторону веб-сервера
+alert icmp any any -> 192.168.20.10 any (msg:"LAB: Ping to Web Server Detected"; itype:8; sid:1000001; rev:1;)

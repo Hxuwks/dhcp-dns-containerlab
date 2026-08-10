@@ -18,25 +18,34 @@ topology:
         - configs/frr-gateway/frr.conf:/etc/frr/frr.conf
         - configs/frr-gateway/dnsmasq.conf:/etc/dnsmasq.conf
         - configs/frr-gateway/keepalived-gw.conf:/etc/keepalived/keepalived.conf
-      exec:
+       exec:
         - ip link add link eth1 name eth1.10 type vlan id 10
         - ip link add link eth2 name eth2.20 type vlan id 20
         - ip link add link eth3 name eth3.30 type vlan id 30
         - ip link set eth1.10 up
         - ip link set eth2.20 up
         - ip link set eth3.30 up
-        - apk add --no-cache dnsmasq iptables keepalived
+        - apk add --no-cache iptables keepalived dnsmasq
         - dnsmasq -C /etc/dnsmasq.conf
-        - ip addr add 192.168.10.2/24 dev eth1.10
-        - ip addr add 192.168.20.2/24 dev eth2.20
-        - ip addr add 192.168.30.2/24 dev eth3.30
+        - ip addr add 192.168.10.3/24 dev eth1.10
+        - ip addr add 192.168.20.3/24 dev eth2.20
+        - ip addr add 192.168.30.3/24 dev eth3.30
+        - iptables -P FORWARD DROP
+        - iptables -A FORWARD -m mark --mark 0x1 -j ACCEPT
+        - iptables -N MIRROR
+        - iptables -A FORWARD -j MIRROR
+        - iptables -A MIRROR -s 192.168.20.40 -j RETURN
+        - iptables -A MIRROR -d 192.168.20.40 -j RETURN
+        - iptables -A MIRROR ! -i eth2.20 -d 192.168.20.0/24 -j MARK --set-mark 0x1
+        - iptables -A MIRROR ! -i eth2.20 -d 192.168.20.0/24 -j TEE --gateway 192.168.20.40
+        - iptables -A MIRROR -i eth2.20 -s 192.168.20.0/24 -j MARK --set-mark 0x1
+        - iptables -A MIRROR -i eth2.20 -s 192.168.20.0/24 -j TEE --gateway 192.168.20.40
         - iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         - iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.10.0/24 -j DROP
         - iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.20.10 -p tcp --dport 80 -j ACCEPT
         - iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.20.0/24 -j DROP
         - iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.20.0/24 -j ACCEPT
         - iptables -A FORWARD -p icmp -j ACCEPT
-        - iptables -P FORWARD DROP
         - keepalived -f /etc/keepalived/keepalived.conf
 
     frr-backup:
@@ -57,13 +66,22 @@ topology:
         - ip addr add 192.168.10.3/24 dev eth1.10
         - ip addr add 192.168.20.3/24 dev eth2.20
         - ip addr add 192.168.30.3/24 dev eth3.30
+        - iptables -P FORWARD DROP
+        - iptables -A FORWARD -m mark --mark 0x1 -j ACCEPT
+        - iptables -N MIRROR
+        - iptables -A FORWARD -j MIRROR
+        - iptables -A MIRROR -s 192.168.20.40 -j RETURN
+        - iptables -A MIRROR -d 192.168.20.40 -j RETURN
+        - iptables -A MIRROR ! -i eth2.20 -d 192.168.20.0/24 -j MARK --set-mark 0x1
+        - iptables -A MIRROR ! -i eth2.20 -d 192.168.20.0/24 -j TEE --gateway 192.168.20.40
+        - iptables -A MIRROR -i eth2.20 -s 192.168.20.0/24 -j MARK --set-mark 0x1
+        - iptables -A MIRROR -i eth2.20 -s 192.168.20.0/24 -j TEE --gateway 192.168.20.40
         - iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         - iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.10.0/24 -j DROP
         - iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.20.10 -p tcp --dport 80 -j ACCEPT
         - iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.20.0/24 -j DROP
         - iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.20.0/24 -j ACCEPT
         - iptables -A FORWARD -p icmp -j ACCEPT
-        - iptables -P FORWARD DROP
         - keepalived -f /etc/keepalived/keepalived.conf
 
     # --- Dev segment ---
@@ -117,6 +135,22 @@ topology:
         - ip route replace default via 192.168.20.1 dev eth1
         - sh -c 'echo "nameserver 192.168.20.1" > /etc/resolv.conf'
 
+    srv-mon:
+      kind: linux
+      image: jasonish/suricata:latest
+      entrypoint: tail -f /dev/null
+      binds:
+        - configs/srv-mon/suricata.yaml:/etc/suricata/suricata.yaml
+        - configs/srv-mon/rules/custom.rules:/etc/suricata/rules/custom.rules
+      exec:
+        - ip addr add 192.168.20.40/24 dev eth1
+        - ip link set eth1 up
+        - ip link set eth1 promisc on
+        # Отключаем маршрутизацию транзитного трафика через сенсор
+        - sysctl -w net.ipv4.ip_forward=0
+        - ip route replace default via 192.168.20.1 dev eth1
+        - suricata -c /etc/suricata/suricata.yaml -i eth1 -D
+
     # --- User segment ---
     sw-usr:
       group: switches
@@ -138,14 +172,22 @@ topology:
         - udhcpc -i eth1
         - ip route replace default via 192.168.30.1 dev eth1
 
+    kali:
+      group: hosts
+      exec:
+        - sleep 10
+        - ip link set eth1 up
+        - udhcpc -i eth1
+        - ip route replace default via 192.168.30.1 dev eth1
+
   links:
     - endpoints: ["frr-gateway:eth1", "sw-dev:e1-1"]
     - endpoints: ["frr-gateway:eth2", "sw-srv:e1-1"]
     - endpoints: ["frr-gateway:eth3", "sw-usr:e1-1"]
 
     - endpoints: ["frr-backup:eth1", "sw-dev:e1-4"]
-    - endpoints: ["frr-backup:eth2", "sw-srv:e1-5"]
-    - endpoints: ["frr-backup:eth3", "sw-usr:e1-4"]
+    - endpoints: ["frr-backup:eth2", "sw-srv:e1-6"]
+    - endpoints: ["frr-backup:eth3", "sw-usr:e1-5"]
 
     - endpoints: ["sw-dev:e1-2", "dev-pc-01:eth1"]
     - endpoints: ["sw-dev:e1-3", "dev-pc-02:eth1"]
@@ -153,6 +195,8 @@ topology:
     - endpoints: ["sw-srv:e1-2", "srv-web:eth1"]
     - endpoints: ["sw-srv:e1-3", "srv-app:eth1"]
     - endpoints: ["sw-srv:e1-4", "srv-db:eth1"]
+    - endpoints: ["sw-srv:e1-5", "srv-mon:eth1"]
 
     - endpoints: ["sw-usr:e1-2", "usr-pc-01:eth1"]
     - endpoints: ["sw-usr:e1-3", "usr-pc-02:eth1"]
+    - endpoints: ["sw-usr:e1-4", "kali:eth1"]
